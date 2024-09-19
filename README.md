@@ -1,17 +1,35 @@
 # Investigating Differential Expression by Sex and Brain Region
 
+## To-Do
+1. Settle how we're dealing with language differences
+2. Set a meeting time for Monday, Sep 23rd. Probably afternoon?
+
 ## The Project
 
 ### The Objective
-The main goal of this project was to investigate the differences in gene expression levels between various groups of brain cells. The analysis focuses on identifying patterns that might inform deeper biological understanding.
+For both the differential conditions of sex and brain region (ACC vs. DLFPC), find 20 genes of interest and report the reliability of our findings.
 
 ### The Data
+30 tissue samples taken from:
+* 10 recently deceased individuals
+* 5 males
+* 5 females
+3 brain regions
+* Anterior cingulate cortex (ACC)
+* Dorsolateral prefrontal cortex (DLPFC)
+* Cerebellum
 
-#### Background
-This project utilized microarray data from brain cells, focusing on gene expression levels. The analysis covered various genes and brain regions, aiming to discern expression patterns. The central dogma of molecular biology (DNA → RNA → Protein) provided the scientific backdrop, emphasizing gene transcription and translation.
+for a total of 30 tissue samples assayed at 3 labs. Each of the 30 tissue samples were portioned into 3 aliquots and sent to labs at
 
-#### Data Facts
-- **Gene Expression Data**: The project involved a matrix of gene expression levels, with 84 samples and 12,600 genes measured. Each row represented a sample from a brain cell, and each column represented a gene.
-- **Microarray Technology**: Microarray chips measured the mRNA expression levels of genes, providing insights into which genes were active in particular cell types.
-- **Brain Regions**: Samples were taken from different brain regions, allowing for comparative analysis.
-- **Patients and Samples**: The dataset included patient-specific data, along with microarray version and brain region source.
+* UC Davis
+* UC Irvine
+* University of Michigan
+
+for a total of 90 microarrays. Note: 6 of the 90 didn't pass quality control, so we only have data for 84. The microarrays were produced by Affymetrix in two slightly different versions.
+
+* HG U95A
+* HG U95Av2
+* Only genes that appear on both versions are retained in the dataset.
+* 12,600 genes.
+* 
+Note: technically, probesets not genes, and some are controls.
