@@ -1,10 +1,5 @@
 # Investigating Differential Expression by Sex and Brain Region
 
----
-title: "The Project"
-output: html_document
----
-
 ## The Project
 
 ### The Objective
