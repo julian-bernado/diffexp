@@ -31,5 +31,5 @@ for a total of 90 microarrays. Note: 6 of the 90 didn't pass quality control, so
 * HG U95Av2
 * Only genes that appear on both versions are retained in the dataset
 * 12,600 genes
-* 
+
 Note: technically, probesets not genes, and some are controls.
