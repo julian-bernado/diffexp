@@ -1,0 +1,171 @@
+---
+title: "STATS 604 PROJ2"
+author: "Julian Bernado"
+date: "2024-09-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R
+
+```{r}
+load("/Users/bernado/Desktop/academics/carcajou/classes/stats604/proj2/diffexp/data/brain.rda")
+
+```
+
+```{r}
+library(dplyr)
+```
+
+```{r}
+expression_tib <- expression %>% as_tibble()
+merged_df <- samples %>% cbind(expression_tib)
+
+merged_df
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+flipped <- merged_df %>% select(where(is.numeric)) %>% t()
+
+lab_boxplot <- ggplot(data = flipped) + geom_boxplot(aes())
+lab_boxplot
+```
+
+```{r}
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+set.seed(123)
+
+# Convert data from wide to long format
+data_long <- merged_df %>%
+  pivot_longer(cols = -c("patient", "sex", "region", "lab", "chip.version", "id"), names_to = "Variable", values_to = "Value")
+
+
+# Create the boxplot, using 'Group' to color the boxes
+labplot <- ggplot(data_long, aes(x = id, y = Value, color = lab)) +
+  geom_boxplot(outliers = FALSE) +
+  theme_minimal() +
+  labs(title = "Boxplot for Each Column with Lab Coloring", x = "ID", y = "Value") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))  # Rotate x-axis labels
+
+chipplot <- ggplot(data_long, aes(x = id, y = Value, color = chip.version)) +
+  geom_boxplot(outliers = FALSE) +
+  theme_minimal() +
+  labs(title = "Boxplot for Each Column with Chip Version Coloring", x = "ID", y = "Value") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))  # Rotate x-axis labels
+
+sexplot <- ggplot(data_long, aes(x = id, y = Value, color = sex)) +
+  geom_boxplot(outliers = FALSE) +
+  theme_minimal() +
+  labs(title = "Boxplot for Each Column with Sex Coloring", x = "ID", y = "Value") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))  # Rotate x-axis labels
+
+patientplot <- ggplot(data_long, aes(x = id, y = Value, color = patient)) +
+  geom_boxplot(outliers = FALSE) +
+  theme_minimal() +
+  labs(title = "Boxplot for Each Column with Patient Coloring", x = "ID", y = "Value") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))  # Rotate x-axis labels
+
+regionplot <- ggplot(data_long, aes(x = id, y = Value, color = region)) +
+  geom_boxplot(outliers = FALSE) +
+  theme_minimal() +
+  labs(title = "Boxplot for Each Column with Region Coloring", x = "ID", y = "Value") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))  # Rotate x-axis labels
+
+labplot
+chipplot
+sexplot
+patientplot
+regionplot
+```
+
+```{r}
+region_vals <- merged_df %>% pull(region) %>% unique()
+lab_vals <- merged_df %>% pull(lab) %>% unique()
+sexes <- c("male", "female")
+
+numeric_n <- merged_df %>% select(where(is.numeric)) %>% ncol()
+need_df <- TRUE
+for (reg in region_vals) {
+  for(l in lab_vals){
+    male_vals <- merged_df %>%
+      filter(region == reg) %>%
+      filter(lab == l) %>%
+      filter(sex == "male") %>%
+      select(where(is.numeric)) %>%
+      colMeans(na.rm = TRUE) %>%
+      as.numeric()
+    
+    female_vals <- merged_df %>%
+      filter(region == reg) %>%
+      filter(lab == l) %>%
+      filter(sex == "female") %>%
+      select(where(is.numeric)) %>%
+      colMeans(na.rm = TRUE)
+      as.numeric()
+    
+    vals <- male_vals - female_vals
+    cur_row <- c(reg, l, vals)
+    if(need_df){
+      sex_diff_df <- data.frame(t(cur_row))
+      need_df <- FALSE
+    } else{
+      sex_diff_df <- sex_diff_df %>% rbind(cur_row)
+    }
+  }
+}
+```
+
+```{r}
+lab <- merged_df %>% group_by(lab)  %>% summarise(across(everything(), mean)) %>% as.data.frame()
+lab
+davis <- as.numeric(lab[1,6:12606])
+irvine <- as.numeric(lab[2,6:12606])
+michigan <- as.numeric(lab[3,6:12606])
+
+davis_norm <- (davis - mean(davis, na.rm = TRUE))/sd(davis, na.rm = TRUE)
+irvine_norm <- (irvine - mean(irvine, na.rm = TRUE))/sd(irvine, na.rm = TRUE)
+michigan_norm <- (michigan - mean(michigan, na.rm = TRUE))/sd(michigan, na.rm = TRUE)
+
+
+# create dataframe
+df <- data.frame( category=factor(rep(c("davis", 
+                                        "irvine",
+                                        "michigan"), 
+                                      each=12601)),
+                    value= c(davis_norm, irvine_norm, michigan_norm) )
+ 
+# Basic density plot with custom color
+ggplot(df, aes(x=value, color=category)) + 
+ 
+  # color property for changing color of plot
+  # geom_density() function plots the density plot
+  geom_density()
+```
+
+```{r}
+merged_df %>% group_by(lab) %>% select(starts_with("AFFX")) %>% summarise(across(everything(), mean))
+
+merged_df
+table(merged_df %>% pull(lab))
+
+```
+  
+```{r}
+colnames(sex_diff_df) <- c("region", "lab", merged_df %>% select(where(is.numeric)) %>% colnames())
+
+sex_diff_df <- sex_diff_df %>% mutate(id = 1:9)
+sex_diff_df
+```
+
+```{r}
+sex_diff_df <- sex_diff_df %>%
+  mutate(across())
+```
