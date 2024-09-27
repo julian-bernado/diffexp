@@ -9,6 +9,8 @@
 #### Data Normalization
 For each combination of nuisance factors (lab and chip version) normalize the set of rows corresponding to that combination (e.g. (Davis, v2)) by group mean and standard deviation. This produces our standardaized dataset hopefully rid of lab to lab and chip to chip variation.
 
+$$ f(x)^2 $$
+
 ####  Getting a List of Genes
 I'll describe the process for analyzing sex differences and the brain region differences will largely take the same shape. Given a subset of the data (the cross-validation we will discuss later) group the data by brain region (DLFP, ACC, cerebellum) and within each of these groups find the top `g` differentially expressed genes within each group. Then, concatenate the lists and take the top `g` genes from the concatenated lists. These will be our `g` genes.
 
