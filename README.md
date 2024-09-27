@@ -1,10 +1,22 @@
 # Investigating Differential Expression by Sex and Brain Region
 
 ## To-Do
-1. Settle how we're dealing with language differences
-2. Set a meeting time for Monday, Sep 23rd. Probably afternoon?
 
 ## The Project
+
+### Our Proposed Pipeline
+
+#### Data Normalization
+For each combination of nuisance factors (lab and chip version) normalize the set of rows corresponding to that combination (e.g. (Davis, v2)) by group mean and standard deviation. This produces our standardaized dataset hopefully rid of lab to lab and chip to chip variation.
+
+####  Getting a List of Genes
+I'll describe the process for analyzing sex differences and the brain region differences will largely take the same shape. Given a subset of the data (the cross-validation we will discuss later) group the data by brain region (DLFP, ACC, cerebellum) and within each of these groups find the top $g$ differentially expressed genes within each group. Then, concatenate the lists and take the top $g$ genes from the concatenated lists. These will be our $g$ genes.
+
+#### Cross-Validation for Robustness and Uncertainty Quantification
+For a given analysis perform a stratified $k$-fold cross validation such that each fold's variable of interest is split about 50/50. For the $k$th fold, produce $g$ genes using the procedure above. Then, produce $g$ genes using this same procedure in the test set and find which of the training genes are present in the test set of genes. For any such genes differentially expressed in both sets, we add this to our final list of genes and count the number of folds $(1 to k)$ that it appeared in. The number will serve as our confidence metric for the genes.
+
+#### Tuning Parameters to Decide
+We need to decide $g$ and $k$. Due to our low number of observations, perhaps 4 fold cross validation is appropriate, but we are not locked in here. As for $g$, it should probably be at least 20, but unsure about this.
 
 ### The Objective
 For both the differential conditions of sex and brain region (ACC vs. DLFPC), find 20 genes of interest and report the reliability of our findings.
