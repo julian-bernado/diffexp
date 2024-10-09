@@ -1,0 +1,592 @@
+---
+title: "Differential Expression of Gene Expressions in the Brain by Sex and Brain Region"
+author: "Julian Bernado, Alexis Edozie, Yizhou Gu and Liza Kostina"
+date: "2024-10-09"
+output:
+  bookdown::pdf_document2: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE, warning = FALSE, message = FALSE, 
+  results = 'hide', cache = TRUE
+)
+library(sva)
+library(plyr)
+library(tidyr)
+library(ggplot2)
+library(car)
+library(caret)
+library(dplyr)
+```
+
+# Introduction
+
+In this project, we will analyze gene expression data from the brain to identify the most differentially expressed genes by sex and brain region (A.C. cortex and D.L.P.F. cortex). This project will be divided into several sections, including (1) exploratory data analysis (EDA), (2) normalization of the data, (3) selection of the most differentially expressed genes by sex and brain region using cross-validation and (4) robustness analysis and uncertainty quantification of our result by comparing the results from our method to those from other popular statistical methods. 
+
+```{r load_data}
+load("data/brain.rda")
+```
+
+
+
+```{r merge}
+merged_df <- merge(expression, samples, by = "row.names") # merge the expression and samples matrix 
+rownames(merged_df) <- merged_df$Row.names
+merged_df$Row.names <- NULL  # remove the Row.names column 
+
+c_merged_df <- merged_df
+
+merged_df <- merged_df %>%      # select the columns that don't start with "AFFX" (non-human)
+  select(-starts_with("AFFX"))
+```
+
+# Exploratory Data Analysis
+
+Our main goal in EDA is to have a sense of the distribution of the data and identify potential batch effects that may affect our analysis. We note that since the data was assayed in different labs and with different chip versions, there may be batch effects present in the data. 
+
+First, we examined the distribution of the gene expression data using boxplots, colored by sex and brain region. We first note that there is not any obvious systematic difference in gene expressions between the two brain regions or between sexes, as shown in Figure \@ref(fig:boxplot-colored-by-sex) and Figure \@ref(fig:boxplot-colored-by-region).
+```{r}
+long_data <- merged_df %>%
+  pivot_longer(cols = ends_with("_at"), 
+               names_to = "gene", 
+               values_to = "expression")
+
+# Box plot of gene expression by lab 
+# ggplot(long_data, aes(x = lab, y = expression, fill = lab)) +
+#  geom_boxplot(outlier.colour = "red", outlier.shape = 16, outlier.size = 2, notch = TRUE) # +
+#  scale_fill_brewer(palette = "Set2") +  # More subdued colors for better presentation
+#  theme_minimal(base_size = 15) +  # Increase base font size
+#  labs(
+#   title = "Distribution of Gene Expression by Lab",
+#    x = "Lab",
+#    y = "Gene Expression (Log Scale)"
+# ) +
+#  theme(
+#    legend.position = "none",  # Remove legend if it's not needed
+#    plot.title = element_text(hjust = 0.5, size = 18, face = "bold"),  # Center title
+#    axis.text.x = element_text(angle = 45, hjust = 1)  # Angle x-axis text for readability
+#  )
+
+#Density of gene expression by lab 
+# ggplot(long_data, aes(x = expression, fill = lab)) +
+#  geom_density(alpha = 0.6, adjust = 1.5, color = "black") +  # Add outlines for clarity
+#  scale_fill_brewer(palette = "Set2") +  # Use a visually appealing color palette
+#  theme_minimal(base_size = 15) +  # Increase base font size
+#  labs(
+#    title = "Density of Gene Expression by Lab",
+#    x = "Gene Expression (Log Scale)",
+#    y = "Density"
+#  ) +
+#  theme(
+#    plot.title = element_text(hjust = 0.5, size = 20, face = "bold"),  # Center and bold title
+#    legend.title = element_blank(),  # Remove legend title
+#    legend.position = "top",  # Position legend at the top
+#    panel.grid.minor = element_blank(),  # Remove minor grid lines for a cleaner look
+#    panel.grid.major = element_line(color = "grey80")  # Lighten major grid lines
+#  )
+
+#ggplot(long_data, aes(x = region, y = expression, color = region)) +
+#  geom_jitter(width = 0.2, height = 0, alpha = 0.7, size = 2) +  # Jitter to avoid #overplotting
+#  theme_minimal(base_size = 15) +
+#  labs(
+#    title = "Gene Expression by Region for Each Lab",
+#    x = "Region",
+#    y = "Gene Expression (Log Scale)",
+#    color = "Region"
+#  ) +
+#  facet_wrap(~ lab) +  # Create a separate plot for each lab
+#  theme(
+#    plot.title = element_text(hjust = 0.5, size = 20, face = "bold"),
+#    legend.position = "top",  # Position legend at the top
+#    axis.text.x = element_text(angle = 45, hjust = 1)  # Angle x-axis text for readability
+#  )
+
+# Convert data from wide to long format
+merged_df_id <- merged_df %>% mutate(id = row.names(merged_df))
+
+data_long <- merged_df_id %>%
+  pivot_longer(cols = -c("patient", "sex", "region", "lab", "chip.version", "id"), names_to = "Variable", values_to = "Value")
+
+
+# Create the boxplot, using 'Group' to color the boxes
+labplot <- ggplot(data_long, aes(x = id, y = Value, color = lab)) +
+  geom_boxplot(outliers = FALSE) +
+  theme_minimal() +
+  labs(title = "Boxplot for Each Column with Lab Coloring", x = "ID", y = "Value") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))  # Rotate x-axis labels
+
+chipplot <- ggplot(data_long, aes(x = id, y = Value, color = chip.version)) +
+  geom_boxplot(outliers = FALSE) +
+  theme_minimal() +
+  labs(title = "Boxplot for Each Column with Chip Version Coloring", x = "ID", y = "Value") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))  # Rotate x-axis labels
+
+sexplot <- ggplot(data_long, aes(x = id, y = Value, color = sex)) +
+  geom_boxplot(outliers = FALSE) +
+  theme_minimal() +
+  labs(title = "Boxplot for Each Column with Sex Coloring", x = "ID", y = "Value") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))  # Rotate x-axis labels
+
+patientplot <- ggplot(data_long, aes(x = id, y = Value, color = patient)) +
+  geom_boxplot(outliers = FALSE) +
+  theme_minimal() +
+  labs(title = "Boxplot for Each Column with Patient Coloring", x = "ID", y = "Value") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))  # Rotate x-axis labels
+
+regionplot <- ggplot(data_long, aes(x = id, y = Value, color = region)) +
+  geom_boxplot(outliers = FALSE) +
+  theme_minimal() +
+  labs(title = "Boxplot for Each Column with Region Coloring", x = "ID", y = "Value") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))  # Rotate x-axis labels
+```
+
+```{r, boxplot-colored-by-sex, fig.width = 8, fig.height = 5, fig.cap = "Boxplot of Gene Expression Colored by Sex"}
+sexplot
+```
+
+```{r, boxplot-colored-by-region, fig.width = 8, fig.height = 5, fig.cap = "Boxplot of Gene Expression Colored by Region"}
+regionplot
+```
+
+However, when we colored the boxplots by lab and chip version, we observed that there are differences in the distribution of gene expressions across labs and chip versions. Namely, we observe that the gene expressions recorded by Irvine lab is higher than those by Davis, which is higher than those by Michigan, as shown in Figure \@ref(fig:boxplot-colored-by-lab). Since these three labs are essentially measuring from identical samples, this difference is likely due to batch effects. Additionally, we note that the gene expressions produced by chip version 2 are higher than those by chip version 1 as shown in Figure \@ref(fig:boxplot-colored-by-chip). The difference in distribution of gene expressions across labs and chip versions presents a challenge in our analysis. First, since the values produced by different labs are not comparable, we cannot simply aggregate the results from different labs, which will result in a much smaller sample size and is not ideal for producing reliable results. Second, we cannot claim that our data is identically distributed, which is a desirable property for downstream analysis where we use statistical methods that assume identical distribution of data. 
+For these reasons, we want to normalize the data to remove the systematic bias in our data and make our data identically distributed before proceeding with our analysis. 
+
+```{r boxplot-colored-by-lab, fig.width = 8, fig.height = 5, fig.cap = "Boxplot of Gene Expression Colored by Lab"}
+labplot
+```
+
+```{r boxplot-colored-by-chip, fig.width = 8, fig.height = 5, fig.cap = "Boxplot of Gene Expression Colored by Chip Version"}
+chipplot
+```
+
+
+# Normalization
+
+```{r z_normalization}
+z_normalized_data <- merged_df %>%
+  group_by(lab, chip.version) %>%
+  mutate(across(where(is.numeric), ~ scale(.)[, 1])) %>%
+  ungroup()
+
+z_normalized_data_long <- z_normalized_data %>%
+  pivot_longer(cols = ends_with("_at"), 
+               names_to = "gene", 
+               values_to = "normalized_expression")
+```
+
+```{r q_normalization}
+# Quintile normalization example
+quintile_normalization <- long_data %>%
+  group_by(lab) %>%
+  mutate(rank = rank(expression)) %>%
+  ungroup() %>%
+  arrange(rank)
+
+# Calculate reference values (mean of expression for each rank)
+reference_quantiles <- quintile_normalization %>%
+  group_by(rank) %>%
+  summarise(reference_value = mean(expression, na.rm = TRUE))
+
+# Create normalized data frame
+normalized_data <- quintile_normalization %>%
+  left_join(reference_quantiles, by = "rank") %>%
+  select(patient, sex, region, lab, chip.version, gene, normalized_expression = reference_value)
+
+# Step 2: Merge normalized expression back into the original data
+final_data <- long_data %>%
+  select(-expression) %>%  # Remove the original expression column
+  left_join(normalized_data, by = c("patient", "sex", "region", "lab", "chip.version", "gene"))
+
+# View the final data
+head(final_data)
+```
+
+```{r q_normalization_combat}
+# Assuming long_data is your data frame with columns: patient, sex, region, lab, chip.version, gene, and expression
+
+# Step 1: Prepare data for ComBat
+# Convert data to wide format for ComBat
+wide_data <- long_data %>%
+  pivot_wider(names_from = gene, values_from = expression)
+
+
+
+# Step 1: Create the batch variable from the original data
+batch <- as.factor(wide_data$lab)  # Extract batch information
+
+# Step 2: Create the data matrix (excluding non-expression columns)
+# Assuming the first five columns are non-expression columns
+data_matrix <- as.matrix(wide_data[, -which(names(wide_data) %in% c("patient", "sex", "region", "lab", "chip.version"))])
+
+# Step 3: Transpose the data matrix to get (number_of_samples, number_of_genes)
+data_matrix <- t(data_matrix)
+
+# Step 4: Check dimensions
+dim(data_matrix)  # Should be (number_of_samples, number_of_genes)
+length(batch)     # Should match the number of samples (rows in data_matrix)
+
+# Step 5: Check for NAs
+if (sum(is.na(data_matrix)) > 0 || sum(is.na(batch)) > 0) {
+    stop("Data contains NA values. Please handle them before running ComBat.")
+}
+
+# Step 6: Run ComBat for batch effect correction
+combat_data <- ComBat(dat = data_matrix, batch = batch, mod = NULL)
+
+# Step 7: Convert normalized data back to a data frame
+normalized_data <- as.data.frame(combat_data)
+
+# Step 8: Set the row names as gene names
+rownames(normalized_data) <- rownames(data_matrix)
+
+# Step 9: Combine normalized data with original non-expression columns
+# Get the non-expression columns (keeping only those relevant to the samples)
+non_expression_cols <- wide_data %>% 
+  select(patient, sex, region, lab, chip.version)
+
+# Step 10: Create a long format of the normalized data
+normalized_data <- t(normalized_data)
+
+normalized_data <- cbind(normalized_data, non_expression_cols)
+
+normalized_data_long <- normalized_data %>%
+  pivot_longer(cols = ends_with("_at"), 
+               names_to = "gene", 
+               values_to = "normalized_expression")
+
+# View the final long format data
+head(normalized_data_long)
+```
+
+```{r spike_normalize}
+# Identify genes not associated with chromosomes
+nan_genes <- rownames(genes)[is.na(genes$chrom)]
+
+# Select control genes that start with "AFFX"
+spike_in_controls <- nan_genes[grepl("^AFFX", nan_genes)]
+
+# List of human genes excluding control genes
+human_genes <- setdiff(rownames(genes), spike_in_controls)
+
+# subset of merged_df with only controls genes
+spike_in_data <- c_merged_df %>% select(all_of(c("lab", spike_in_controls))) 
+# List of lab values
+lab_values <- c("Irvine", "Davis", "Michigan")
+
+# Initialize an empty list to store the subsetted data for each lab
+lab_subsets <- list()
+
+# Initialize an empty list to store the mean values for each lab
+lab_means <- list()
+
+# Loop through each lab value
+for (lab in lab_values) {
+  # Subset the spike_in_data where the lab column matches the current lab value
+  lab_data <- spike_in_data[spike_in_data$lab == lab, ]
+  
+  # Calculate the column means for the spike-in control genes (excluding the lab column)
+  lab_means[[lab]] <- colMeans(lab_data[, spike_in_controls], na.rm = TRUE)
+
+}
+
+# Initialize an empty list to store normalized data for each lab
+lab_to_normalized_data <- list()
+
+# Loop through each lab value
+for (lab in lab_values) {
+  
+  # Subset the data for the current lab
+  lab_data <- c_merged_df %>% filter(lab == !!lab)
+  
+  # Extract only the spike-in control gene data for the current lab
+  spike_in_data <- lab_data[, spike_in_controls, drop = FALSE]
+  
+  # Calculate the control means for each spike-in gene (by row)
+  control_means <- rowMeans(spike_in_data, na.rm = TRUE)  # This will be used to normalize
+  
+  # Normalize the lab data by dividing each gene's expression by the corresponding control mean
+  sp_normalized_data <- sweep(lab_data[, human_genes, drop = FALSE], 1, control_means, FUN = "/")
+  
+  # Create a data frame to store both normalized data and metadata
+  normalized_data_combined <- cbind(lab_data[, c("patient", "sex", "region", "lab", "chip.version")], sp_normalized_data)
+  
+  # Store the combined normalized data for the lab
+  lab_to_normalized_data[[lab]] <- normalized_data_combined
+}
+
+s_normalized_data <- rbind(lab_to_normalized_data[["Michigan"]], lab_to_normalized_data[["Davis"]], lab_to_normalized_data[["Irvine"]])
+s_normalized_data <- s_normalized_data %>% arrange(patient, region, lab)
+s_normalized_data_long <- s_normalized_data %>%
+  pivot_longer(cols = ends_with("_at"), 
+               names_to = "gene", 
+               values_to = "normalized_expression")
+```
+
+# Gene Selection
+
+```{r top_n_genes}
+# function to create the concatenated list of the top 40 (combined) differentially expressed genes (no conditioning on confounding variable)
+
+top_n_genes <- function(n = 20, df, variable_of_interest) {
+  if (variable_of_interest == "region") {
+    
+    # Function to compute top genes for a given sex
+    compute_top_genes <- function() {
+      filtered_data <- df %>%
+        group_by(region) %>%
+        dplyr::summarise(across(ends_with("_at"), mean, na.rm = TRUE), .groups = 'drop')
+      
+      filtered_data <- filtered_data %>%
+        select(region, ends_with("_at")) %>%
+        slice(c(1, 3))  # Select specific regions (e.g., A.C. cortex and D.L.P.F. cortex)
+      
+      difference_row <- filtered_data %>%
+        dplyr::summarise(across(-region,  ~ .[region == "A.C. cortex"] - .[region == "D.L.P.F. cortex"])) %>%
+        dplyr::mutate(region = "Difference")
+
+      
+      # Combine with the original data and calculate absolute differences
+      result <- bind_rows(filtered_data, difference_row) %>%
+        dplyr::mutate(across(-region, abs))   # Ensure to apply abs on relevant columns
+      
+      # Extract the "Difference" row and get top genes
+      result %>%
+        filter(region == "Difference") %>%
+        select(-region) %>%
+        pivot_longer(everything(), names_to = "Gene", values_to = "AbsoluteDifference") %>%
+        arrange(desc(AbsoluteDifference)) %>%
+        slice_head(n = n)
+    }
+    
+    # Get top genes for both sexes
+    top_genes <- compute_top_genes()
+    
+    # Combine results for region
+    top_genes <- top_genes %>%
+      arrange(desc(AbsoluteDifference))
+    
+    return(top_genes)
+    
+  } 
+  else if (variable_of_interest == "sex") {
+    
+    # Function to compute top genes for a given region
+    compute_top_genes_sex <- function(region_value) {
+      filtered_data <- df %>%
+        group_by(sex) %>%
+        dplyr::summarise(across(ends_with("_at"), mean, na.rm = TRUE), .groups = 'drop')
+      
+      difference_row <- filtered_data %>%
+        dplyr::summarise(across(-sex,  ~ .[sex == "female"] - .[sex == "male"])) %>%
+        dplyr::mutate(sex = "Difference")
+      
+      # Combine with the original data and calculate absolute differences
+      result <- bind_rows(filtered_data, difference_row) %>%
+        dplyr::mutate(across(-sex, abs))  # Ensure to apply abs on relevant columns
+      
+      # Extract the "Difference" row and get top genes
+      result %>%
+        filter(sex == "Difference") %>%
+        select(-sex) %>%
+        pivot_longer(everything(), names_to = "Gene", values_to = "AbsoluteDifference") %>%
+        arrange(desc(AbsoluteDifference)) %>%
+        slice_head(n = n)
+    }
+    
+    # Get top genes for both regions
+    top_genes <- compute_top_genes_sex()
+    
+    # Combine results for sex
+    top_genes <- top_genes %>%
+      arrange(desc(AbsoluteDifference))
+    
+    return(top_genes)
+  }
+  
+  # Return NULL if variable_of_interest is not recognized
+  return(NULL)
+}
+```
+
+```{r calc_result}
+# Example of calling the function
+result_region <- top_n_genes(20, merged_df, "region")
+result_sex <- top_n_genes(20, merged_df, "sex")
+```
+
+```{r cv_region}
+# Cross Validation Function
+cv_genes <- function(df, k = 4, analysis){
+  # Create folds
+  set.seed(123)  # Set seed for reproducibility
+  folds <- createFolds(factor(df %>% pull(analysis)), k = 4, list = FALSE)
+  
+  # Add folds to the original dataframe
+  df$fold <- folds
+  
+  sex_list <- list()
+  
+  # Perform cross-validation
+  for (i in 1:4) {
+    # Split data into training and validation sets
+    train_data <- df %>% filter(fold != i)
+    valid_data <- df %>% filter(fold == i)
+    
+    # For sex
+    sex_genes <- intersect(top_n_genes(20, train_data, analysis)$Gene, 
+                           top_n_genes(20, valid_data, analysis)$Gene)
+    sex_list <- append(sex_list, sex_genes)
+  }
+  
+  
+  # Count occurrences of each gene in sex_list
+  genes_counts_sex <- table(unlist(sex_list))
+  # Convert to data frame
+  df_genes_counts_sex <- as.data.frame(genes_counts_sex)
+  # Rename the columns for clarity
+  colnames(df_genes_counts_sex) <- c("Genes", "NumFolds")
+  
+  df_genes_counts_sex <- df_genes_counts_sex %>%
+        arrange(desc(NumFolds))
+
+  return(df_genes_counts_sex)
+}
+```
+
+```{r cv_sex}
+cv_genes(normalized_data, analysis = "sex")
+cv_genes(normalized_data, analysis = "region")
+```
+
+# Robustness
+
+## Wilcoxon rank sum test
+
+```{r}
+# Create a data frame to store results
+wilcox_results <- data.frame(gene = character(), p_value = numeric(), stringsAsFactors = FALSE)
+
+mean_centered_expr <- merged_df %>%
+  group_by(lab, chip.version) %>%
+  mutate(across(where(is.numeric), ~ scale(.)[, 1])) %>%
+  ungroup()
+
+
+# List of gene columns
+gene_cols <- colnames(mean_centered_expr)[!(colnames(mean_centered_expr) %in% c("patient", "sex", "region", "lab", "chip.version"))]
+
+# Loop through each gene to perform the Wilcoxon test
+for (gene in gene_cols) {
+  # Extract male and female expression values
+  male_expression <- as.numeric(mean_centered_expr[[gene]][mean_centered_expr$sex == "male"])
+  female_expression <- as.numeric(mean_centered_expr[[gene]][mean_centered_expr$sex == "female"])
+  
+  # Perform the Wilcoxon test
+  test_result <- wilcox.test(male_expression, female_expression, exact = FALSE)
+  
+  # Store the results
+  wilcox_results <- rbind(wilcox_results, data.frame(gene = gene, p_value = test_result$p.value))
+}
+
+# Filter for genes with p-value < 0.05
+significant_genes <- wilcox_results %>%
+  arrange(p_value) %>%
+  filter(p_value < 0.05)
+
+# Adjust p-values for multiple comparisons (optional)
+wilcox_results$adjusted_p_value <- p.adjust(wilcox_results$p_value, method = "BH")  # Benjamini-Hochberg
+
+# Sort results by adjusted p-value
+wilcox_results <- wilcox_results %>% arrange(adjusted_p_value)
+
+# Filter for genes with adjusted p-value < 0.05
+significant_genes <- wilcox_results %>% filter(adjusted_p_value < 0.05)
+
+# View significant genes
+print(significant_genes)
+```
+
+```{r}
+# Create a data frame to store results
+wilcox_results <- data.frame(gene = character(), p_value = numeric(), stringsAsFactors = FALSE)
+
+# List of gene columns
+gene_cols <- colnames(mean_centered_expr)[!(colnames(mean_centered_expr) %in% c("patient", "sex", "region", "lab", "chip.version"))]
+
+# Loop through each gene to perform the Wilcoxon test
+for (gene in gene_cols) {
+  # Extract male and female expression values
+  ac_expression <- as.numeric(mean_centered_expr[[gene]][mean_centered_expr$region == "A.C. cortex"])
+  dlpf_expression <- as.numeric(mean_centered_expr[[gene]][mean_centered_expr$region == "D.L.P.F. cortex"])
+  
+  # Perform the Wilcoxon test
+  test_result <- wilcox.test(ac_expression, dlpf_expression, exact = FALSE)
+  
+  # Store the results
+  wilcox_results <- rbind(wilcox_results, data.frame(gene = gene, p_value = test_result$p.value))
+}
+
+# Adjust p-values for multiple comparisons (optional)
+wilcox_results$adjusted_p_value <- p.adjust(wilcox_results$p_value, method = "BH")  # Benjamini-Hochberg
+
+# Sort results by adjusted p-value
+wilcox_results <- wilcox_results %>% arrange(adjusted_p_value)
+
+# Filter for genes with adjusted p-value < 0.05
+significant_genes <- wilcox_results %>% filter(adjusted_p_value < 0.05)
+
+# View significant genes
+print(significant_genes)
+```
+
+## Investigating alternate normalizations
+
+```{r alternate_normalizations}
+main_sex <- cv_genes(normalized_data, analysis = "sex")
+main_region <- cv_genes(normalized_data, analysis = "region")
+print(main_sex)
+print(main_region)
+```
+
+```{r alternate_normalizations_s}
+s_sex <- print(cv_genes(s_normalized_data, analysis = "sex"))
+s_region <- print(cv_genes(s_normalized_data, analysis = "region"))
+print(s_sex)
+print(s_region)
+```
+
+```{r alternate_normalizations_z}
+z_sex <- print(cv_genes(z_normalized_data, analysis = "sex"))
+z_region <- print(cv_genes(z_normalized_data, analysis = "region"))
+print(z_sex)
+print(z_region)
+```
+
+
+### Shared Results
+
+```{r}
+length(s_sex$Genes)
+mean(s_sex$Genes %in% c(main_sex$genes, s_sex$genes))
+
+length(s_region$Genes)
+mean(s_region$Genes %in% c(main_region$genes, s_region$genes))
+
+length(z_sex$Genes)
+mean(z_sex$Genes %in% c(main_sex$genes, z_sex$genes))
+
+length(z_region$Genes)
+mean(z_region$Genes %in% c(main_region$genes, z_region$genes))
+```
+
+\newpage
+# Appendix: All code for this report
+
+```{r get-labels, echo = FALSE}
+labs = knitr::all_labels()
+labs = setdiff(labs, c("setup","get-labels"))
+```
+
+```{r all-code, ref.label=labs, echo=T, eval=FALSE}
+```
