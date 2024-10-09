@@ -18,6 +18,7 @@ library(ggplot2)
 library(car)
 library(caret)
 library(dplyr)
+library(gt)
 ```
 
 # Introduction
@@ -558,7 +559,12 @@ While we have identified a promising initial, stable list of genes for both of t
 
 # Robustness
 
-## Wilcoxon rank sum test
+Given the coarse nature of our current estimate of uncertainty, we wish to understand how robust our selection process is in terms of various analysis choices. In particular, in this section we will analyze how our results change based on two design choices: a more classical statistical test for significance and alternate normalizations. 
+
+## Wilcoxon Rank-Sum Test
+
+The Wilcoxon Rank Sum test is a non-parametric hypothesis testing procedure that tests whether two samples come from populations with the same distribution. Being non-parametric, it makes minimal assumptions about the underlying distributions from which our samples come from. With this in mind, we felt that this was an appropriate procedure to test whether, for example, gene expression was equally distributed between men and women in the data. For each non-control gene in the data set, we compared the expression values coming from one condition of interest to another (i.e. male vs. female or AC vs. DLFP). 
+\par After receiving a p-value for each gene in the data, we applied a Benjamini-Hochberg correction to account for multiple testing and identified those significant at $\alpha = 0.05$. We found no genes that seemed to be distributed differently in the different brain cortices and found the following genes to be differentially expressed in men versus women: `41214_at` and `38355_at`. It is worth noting that both of these genes were found in our main analysis, which underscores our confidence in these genes' differential expression.
 
 ```{r}
 # Create a data frame to store results
@@ -601,7 +607,7 @@ wilcox_results <- wilcox_results %>% arrange(adjusted_p_value)
 significant_genes <- wilcox_results %>% filter(adjusted_p_value < 0.05)
 
 # View significant genes
-print(significant_genes)
+#print(significant_genes)
 ```
 
 ```{r}
@@ -634,48 +640,56 @@ wilcox_results <- wilcox_results %>% arrange(adjusted_p_value)
 significant_genes <- wilcox_results %>% filter(adjusted_p_value < 0.05)
 
 # View significant genes
-print(significant_genes)
+# print(significant_genes)
 ```
 
-## Investigating alternate normalizations
+## Alternate Normalizations
+
+While we were most confident in our application of Quantile Normalization with ComBat, we wondered whether we would select the same genes if we applied our main analysis with alternate normalizations. The two alternate normalizations we considered were Z-score Normalization and Spike-in Normalization. For Z-score normalization we grouped the data by both chip set and lab, then standardized such that each group has mean zero and standard deviation one. For Spike-in Normalization we found the average gene expression in each lab for the control probesets and divided each gene's expression by the mean of that lab's control value.
+\par After applying each of these normalizations and conducting the cross-validation analysis we found the following numbers of significant genes:
+
+| Alternate Normalization | Sex Genes | Share with Main | Region Genes | Share with Main |
+|-------------------------|-----------|-----------------|--------------|-----------------|
+| Z-Score                 | 8         | 6               | 2            | 1               |
+| Spike-in                | 7         | 6               | 3            | 3               |
+
+where the "Share with Main" column denotes how many of these genes were also found in the main analysis. As we see, there was relatively consistent results between the different normalizations. As such, while the quantile normalization with ComBat was able to find more significant genes than these alternate normalizations, those that were found by the alternate normalizations tended to also be found in the main analysis. To summarize, those genes identified by all forms of normalization were the following:
+
+| Sex Genes  | Region Genes |
+|------------|--------------|
+| 38355_at   |              |
+| 41214_at   |              |
+| 31525_s_at |              |
+| 32052_at   |              |
+
+This gives us some further reason to investigate these genes as potentially differentially expressed by sex, but also undermines the robustness of our main analysis' brain region results.
+
 
 ```{r alternate_normalizations}
-main_sex <- cv_genes(normalized_data, analysis = "sex")
-main_region <- cv_genes(normalized_data, analysis = "region")
-print(main_sex)
-print(main_region)
+#main_sex <- cv_genes(normalized_data, analysis = "sex")
+#main_region <- cv_genes(normalized_data, analysis = "region")
+#print(main_sex)
+#print(main_region)
 ```
 
 ```{r alternate_normalizations_s}
-s_sex <- print(cv_genes(s_normalized_data, analysis = "sex"))
-s_region <- print(cv_genes(s_normalized_data, analysis = "region"))
-print(s_sex)
-print(s_region)
+#s_sex <- print(cv_genes(s_normalized_data, analysis = "sex"))
+#s_region <- print(cv_genes(s_normalized_data, analysis = "region"))
+#print(s_sex)
+#print(s_region)
 ```
 
 ```{r alternate_normalizations_z}
-z_sex <- print(cv_genes(z_normalized_data, analysis = "sex"))
-z_region <- print(cv_genes(z_normalized_data, analysis = "region"))
-print(z_sex)
-print(z_region)
+#z_sex <- print(cv_genes(z_normalized_data, analysis = "sex"))
+#z_region <- print(cv_genes(z_normalized_data, analysis = "region"))
+#print(z_sex)
+#print(z_region)
 ```
 
+# Conclusion
 
-### Shared Results
-
-```{r}
-length(s_sex$Genes)
-mean(s_sex$Genes %in% c(main_sex$genes, s_sex$genes))
-
-length(s_region$Genes)
-mean(s_region$Genes %in% c(main_region$genes, s_region$genes))
-
-length(z_sex$Genes)
-mean(z_sex$Genes %in% c(main_sex$genes, z_sex$genes))
-
-length(z_region$Genes)
-mean(z_region$Genes %in% c(main_region$genes, z_region$genes))
-```
+In this analysis we first performed exploratory data analysis. Here we found systematic differences in gene expression between labs and decided to use quantile normalization with ComBat, using the former to deal with differences in distribution and the latter to deal with varying sample sizes between the labs. After the data appeared to be consistent across labs, we used a stratified cross-validation in order to identify genes with large mean differences across independent random samples of the data in order to produce a list of 8 genes differentially expressed across sex and 13 that were differentially expressed between brain regions. After conducting some robustness checks, we found consistency of many of our sex genes across different normalization schemes, but less consistency across brain region genes. 
+\par Moving forward, lab members should let us know which of these genes are of interest and we can conduct more thorough analyses. In particular, multiple of the identified sex genes are on the Y chromosome, which may or may not be of interest to researchers. In future analyses of this type, we would be interested in investigating which genes are co-expressed as well as using more sophisticated techniques to extract differentially expressed genes.
 
 \newpage
 # Appendix: All code for this report
