@@ -325,15 +325,24 @@ s_normalized_data_long <- s_normalized_data %>%
 
 # Gene Selection
 
-```{r top_n_genes}
-# function to create the concatenated list of the top 40 (combined) differentially expressed genes (no conditioning on confounding variable)
+Over the course of this investigation, our aim was to identify genes that exhibit significant differential expression for two types of comparison groups: brain region (A.C. Cortex vs. D.L.P.F Cortex) and sex (male vs. female) and effectively relay our uncertainty about our findings to your team.
+
+The methodology that we used to find an initial list of differentially expressed genes was inspired by stratified 4-fold cross-validation. The stratification ensures that each fold is representative of the entire data set. Specifically, if the current variable of interest was brain region, each fold would contain approximately 33% of their samples from each brain region. Similarly, in the case that we were interested in looking at sex as the variable of interest, each fold would be composed of roughly 50% male and 50% female samples. By making this choice, we could essentially look at each fold as a subset of the data that's distribution is similar to the overall data distribution, which is important when making claims about the characteristics of the data in each fold. 
+
+The overall process we used is as follows. As would be expected when doing k=4 fold cross validation, we had four runs. In each of the runs, the data was split into four folds; one fold would act as Data Set 1 and the other three folds would act as Data Set 2. Each of these would be treated as a distinct data set. For each data set, we would apply our gene selection criteria separately to identify the top 20 genes for each of the two data sets. Specifically, our gene selection criteria chooses the top 20 genes with the largest absolute log2 fold change between comparison groups, whether it be between brain regions or sexes. This criterion is critical as it helps to pinpoint genes that exhibit substantial differences in expression. Then, once we have formed the two lists, we would find the genes in the intersection of these two lists. This process repeats for each of the four runs and for both of the variables of interest (brain region and sex). The intersection of these lists across all runs and variables of interest will yield two lists of genes (for brain region and sex), each assigned a score from 0 to 4 based on the number of runs in which they appear in the intersection. The objective is to identify genes that consistently appear in the intersection of the lists generated from these data sets (i.e. have a score closer to 4). This intersection approach allows us to focus on genes that demonstrate stable differential expression across various data splits, allowing for more robust gene selection.
+
+A gene receiving a score of 4 (or close to 4) indicates that the gene is not only differentially expressed but does so consistently across different data splits. These stable genes are of particular interest, as they suggest reliable biological significance rather than being artifacts of specific data configurations. With this in mind, we can present the initial two lists of genes. 
+
+```{r}
+# function to create the concatenated list of the top 40 (combined) differentially expressed genes conditioned on the confounding variable
 
 top_n_genes <- function(n = 20, df, variable_of_interest) {
   if (variable_of_interest == "region") {
     
     # Function to compute top genes for a given sex
-    compute_top_genes <- function() {
+    compute_top_genes <- function(sex_value) {
       filtered_data <- df %>%
+        filter(sex == sex_value) %>%
         group_by(region) %>%
         dplyr::summarise(across(ends_with("_at"), mean, na.rm = TRUE), .groups = 'drop')
       
@@ -360,13 +369,14 @@ top_n_genes <- function(n = 20, df, variable_of_interest) {
     }
     
     # Get top genes for both sexes
-    top_genes <- compute_top_genes()
+    top_genes_female <- compute_top_genes("female")
+    top_genes_male <- compute_top_genes("male")
     
     # Combine results for region
-    top_genes <- top_genes %>%
+    combined_genes_region <- bind_rows(top_genes_female, top_genes_male) %>%
       arrange(desc(AbsoluteDifference))
     
-    return(top_genes)
+    return(combined_genes_region)
     
   } 
   else if (variable_of_interest == "sex") {
@@ -374,6 +384,7 @@ top_n_genes <- function(n = 20, df, variable_of_interest) {
     # Function to compute top genes for a given region
     compute_top_genes_sex <- function(region_value) {
       filtered_data <- df %>%
+        filter(region == region_value) %>%
         group_by(sex) %>%
         dplyr::summarise(across(ends_with("_at"), mean, na.rm = TRUE), .groups = 'drop')
       
@@ -395,13 +406,14 @@ top_n_genes <- function(n = 20, df, variable_of_interest) {
     }
     
     # Get top genes for both regions
-    top_genes <- compute_top_genes_sex()
+    top_genes_accortex <- compute_top_genes_sex("A.C. cortex")
+    top_genes_dlpfcortex <- compute_top_genes_sex("D.L.P.F. cortex")
     
     # Combine results for sex
-    top_genes <- top_genes %>%
+    combined_genes_sex <- bind_rows(top_genes_accortex, top_genes_dlpfcortex) %>%
       arrange(desc(AbsoluteDifference))
     
-    return(top_genes)
+    return(combined_genes_sex)
   }
   
   # Return NULL if variable_of_interest is not recognized
@@ -409,55 +421,140 @@ top_n_genes <- function(n = 20, df, variable_of_interest) {
 }
 ```
 
-```{r calc_result}
-# Example of calling the function
-result_region <- top_n_genes(20, merged_df, "region")
-result_sex <- top_n_genes(20, merged_df, "sex")
-```
 
-```{r cv_region}
-# Cross Validation Function
-cv_genes <- function(df, k = 4, analysis){
-  # Create folds
-  set.seed(123)  # Set seed for reproducibility
-  folds <- createFolds(factor(df %>% pull(analysis)), k = 4, list = FALSE)
-  
-  # Add folds to the original dataframe
-  df$fold <- folds
-  
-  sex_list <- list()
-  
-  # Perform cross-validation
-  for (i in 1:4) {
-    # Split data into training and validation sets
-    train_data <- df %>% filter(fold != i)
-    valid_data <- df %>% filter(fold == i)
-    
-    # For sex
-    sex_genes <- intersect(top_n_genes(20, train_data, analysis)$Gene, 
-                           top_n_genes(20, valid_data, analysis)$Gene)
-    sex_list <- append(sex_list, sex_genes)
-  }
-  
-  
-  # Count occurrences of each gene in sex_list
-  genes_counts_sex <- table(unlist(sex_list))
-  # Convert to data frame
-  df_genes_counts_sex <- as.data.frame(genes_counts_sex)
-  # Rename the columns for clarity
-  colnames(df_genes_counts_sex) <- c("Genes", "NumFolds")
-  
-  df_genes_counts_sex <- df_genes_counts_sex %>%
-        arrange(desc(NumFolds))
 
-  return(df_genes_counts_sex)
+```{r region-table, fig.cap = "Table of Differentially Expressed Genes for Region based on CV"}
+# cross validation for region
+# note: set the data frame you are using to be called "normalized_data" after normalization technique 
+
+
+# Create folds
+set.seed(123)  # Set seed for reproducibility
+folds <- createFolds(factor(normalized_data$region), k = 4, list = FALSE)
+# Add folds to the original dataframe
+normalized_data$fold <- folds
+
+# Calculate the proportion of each region in each fold
+summary_df <- normalized_data %>%
+  group_by(fold) %>%
+  summarise(prop = mean(region == "A.C. cortex"))  # Adjust as needed
+
+
+
+# Initialize lists to store gene names
+region_list <- list()
+
+# Perform cross-validation
+for (i in 1:4) {
+  # Split data into training and validation sets
+  train_data <- normalized_data %>% filter(fold != i)
+  valid_data <- normalized_data %>% filter(fold == i)
+  
+  # For region
+  region_genes <- intersect(top_n_genes(20, train_data, "region")$Gene, 
+                            top_n_genes(20, valid_data, "region")$Gene)
+  region_list <- append(region_list, region_genes)
+  
 }
+
+# Count occurrences of each gene in region_list
+genes_counts_region <- table(unlist(region_list))
+# Convert to data frame
+df_genes_counts_region <- as.data.frame(genes_counts_region)
+# Rename the columns for clarity
+colnames(df_genes_counts_region) <- c("Genes", "NumFolds")
+
+df_genes_counts_region <- df_genes_counts_region %>%
+      arrange(desc(NumFolds)) %>% 
+      filter(NumFolds >= 2)
+
+
+# Create a gt table for df_genes_counts_region
+df_genes_counts_region %>%
+  gt() %>%
+  tab_header(
+    title = "Top Genes Across Runs for Region"
+  ) %>%
+  cols_label(
+    Genes = "Genes",
+    NumFolds = "Number of Runs"
+  ) %>%
+  fmt_number(
+    columns = c(NumFolds),
+    decimals = 0
+  ) %>%
+  tab_spanner(
+    label = "Gene Frequency Analysis",
+    columns = c(Genes, NumFolds)
+  )
+
 ```
 
-```{r cv_sex}
-cv_genes(normalized_data, analysis = "sex")
-cv_genes(normalized_data, analysis = "region")
+The analysis in \@ref(fig:region-table) revealed a set of 10 genes that are differentially expressed between the two cortexes consistently across different subsets of the data (i.e. in the intersection in at least 2 runs). This consistency is a positive indicator which suggests that these genes are robust and not particularly influenced by individual data splits. One notable gene, 38308_g_at, consistently ranks among the top differentially expressed genes, as it appears in the intersection of the top 20 list for each of the data splits for each run. Overall, these 10 genes represent an initial list of candidates that we are fairly certain play a role regarding regional expression differences, and should be looked into if the expenses allows. Further analysis later in this memo is done to confirm some of these choices and to find priority genes which we are more confident about.
+
+```{r sex-table, fig.cap = "Table of Differentially Expressed Genes for Sex based on CV"}
+#cross validation for sex 
+# note: set the data frame you are using to be called "normalized_data" after normalization technique 
+
+# Create folds
+set.seed(123)  # Set seed for reproducibility
+folds <- createFolds(factor(normalized_data$sex), k = 4, list = FALSE)
+
+# Add folds to the original dataframe
+normalized_data$fold <- folds
+
+sex_list <- list()
+
+# Perform cross-validation
+for (i in 1:4) {
+  # Split data into training and validation sets
+  train_data <- normalized_data %>% filter(fold != i)
+  valid_data <- normalized_data %>% filter(fold == i)
+  
+  # For sex
+  sex_genes <- intersect(top_n_genes(20, train_data, "sex")$Gene, 
+                         top_n_genes(20, valid_data, "sex")$Gene)
+  sex_list <- append(sex_list, sex_genes)
+}
+
+
+# Count occurrences of each gene in sex_list
+genes_counts_sex <- table(unlist(sex_list))
+# Convert to data frame
+df_genes_counts_sex <- as.data.frame(genes_counts_sex)
+# Rename the columns for clarity
+colnames(df_genes_counts_sex) <- c("Genes", "NumFolds")
+
+df_genes_counts_sex <- df_genes_counts_sex %>%
+      arrange(desc(NumFolds)) %>% 
+      filter(NumFolds >= 2)
+
+
+# Create a gt table for df_genes_counts_sex
+df_genes_counts_sex %>%
+  gt() %>%
+  tab_header(
+    title = "Top Genes Across Runs for Sex"
+  ) %>%
+  cols_label(
+    Genes = "Genes",
+    NumFolds = "Number of Runs"
+  ) %>%
+  fmt_number(
+    columns = c(NumFolds),
+    decimals = 0
+  ) %>%
+  tab_spanner(
+    label = "Gene Frequency Analysis",
+    columns = c(Genes, NumFolds)
+  )
+
+
 ```
+
+The analysis in \@ref(fig:sex-table) also revealed a set of 5 genes are are differentially expresed between the two sexes regardless of the manner in which the data was split during cross validation. Specifically, these are genes that we have some confidence in believing are actually differentially expressed between males and females, seeing as they consistently appear on the top 20 lists when we split the data which is unfortunately << the number of original candidate genes. Again, we have one gene, 41214_at, which shows up in the intersection in every run. This is an inital list of genes which we selected from the massive set of genes we were given which we believe to be differentially expressed consistently across subsets of the data, and although these are our most stable choices, further analysis is also done to cooaberate the genes on this list as well through more classical statical analysis. 
+
+While we have identified a promising initial, stable list of genes for both of the variables of interest, it is essential to address the inherent uncertainties in these selections. As we proceed, we will discuss the steps we have taken to confirm some of the selected genes using other tests in order to form a priority list of genes that we are most confident in. Overall, this foundational work done by the stratified 4-fold cross validation acted as an initial gene filtering process and set the stage for more in-depth exploration and validation of these candidate genes.
 
 # Robustness
 
