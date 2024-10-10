@@ -18,18 +18,15 @@ library(ggplot2)
 library(car)
 library(caret)
 library(dplyr)
-library(gt)
 ```
 
 # Introduction
 
-In this project, we will analyze gene expression data from the brain to identify the most differentially expressed genes by sex and brain region (A.C. cortex and D.L.P.F. cortex). This project will be divided into several sections, including (1) exploratory data analysis (EDA), (2) normalization of the data, (3) selection of the most differentially expressed genes by sex and brain region using cross-validation and (4) robustness analysis and uncertainty quantification of our result by comparing the results from our method to those from other popular statistical methods. 
+In this project, we will analyze gene expression data from the brain to identify the most differentially expressed genes by sex and brain region (A.C. cortex and D.L.P.F. cortex). This project will be divided into several sections, including (1) exploratory data analysis (EDA), (2) normalization of the data, (3) selection of the most differentially expressed genes by sex and brain region using cross-validation and (4) robustness analysis and uncertainty quantification of our result by comparing the results from our method to those from other popular statistical methods.
 
 ```{r load_data}
 load("data/brain.rda")
 ```
-
-
 
 ```{r merge}
 merged_df <- merge(expression, samples, by = "row.names") # merge the expression and samples matrix 
@@ -44,9 +41,10 @@ merged_df <- merged_df %>%      # select the columns that don't start with "AFFX
 
 # Exploratory Data Analysis
 
-Our main goal in EDA is to have a sense of the distribution of the data and identify potential batch effects that may affect our analysis. We note that since the data was assayed in different labs and with different chip versions, there may be batch effects present in the data. 
+Our main goal in EDA is to have a sense of the distribution of the data and identify potential batch effects that may affect our analysis. We note that since the data was assayed in different labs and with different chip versions, there may be batch effects present in the data.
 
 First, we examined the distribution of the gene expression data using boxplots, colored by sex and brain region. We first note that there is not any obvious systematic difference in gene expressions between the two brain regions or between sexes, as shown in Figure \@ref(fig:boxplot-colored-by-sex) and Figure \@ref(fig:boxplot-colored-by-region).
+
 ```{r}
 long_data <- merged_df %>%
   pivot_longer(cols = ends_with("_at"), 
@@ -150,8 +148,7 @@ sexplot
 regionplot
 ```
 
-However, when we colored the boxplots by lab and chip version, we observed that there are differences in the distribution of gene expressions across labs and chip versions. Namely, we observe that the gene expressions recorded by Irvine lab is higher than those by Davis, which is higher than those by Michigan, as shown in Figure \@ref(fig:boxplot-colored-by-lab). Since these three labs are essentially measuring from identical samples, this difference is likely due to batch effects. Additionally, we note that the gene expressions produced by chip version 2 are higher than those by chip version 1 as shown in Figure \@ref(fig:boxplot-colored-by-chip). The difference in distribution of gene expressions across labs and chip versions presents a challenge in our analysis. First, since the values produced by different labs are not comparable, we cannot simply aggregate the results from different labs, which will result in a much smaller sample size and is not ideal for producing reliable results. Second, we cannot claim that our data is identically distributed, which is a desirable property for downstream analysis where we use statistical methods that assume identical distribution of data. 
-For these reasons, we want to normalize the data to remove the systematic bias in our data and make our data identically distributed before proceeding with our analysis. 
+However, when we colored the boxplots by lab and chip version, we observed that there are differences in the distribution of gene expressions across labs and chip versions. Namely, we observe that the gene expressions recorded by Irvine lab is higher than those by Davis, which is higher than those by Michigan, as shown in Figure \@ref(fig:boxplot-colored-by-lab). Since these three labs are essentially measuring from identical samples, this difference is likely due to batch effects. Additionally, we note that the gene expressions produced by chip version 2 are higher than those by chip version 1 as shown in Figure \@ref(fig:boxplot-colored-by-chip). The difference in distribution of gene expressions across labs and chip versions presents a challenge in our analysis. First, since the values produced by different labs are not comparable, we cannot simply aggregate the results from different labs, which will result in a much smaller sample size and is not ideal for producing reliable results. Second, we cannot claim that our data is identically distributed, which is a desirable property for downstream analysis where we use statistical methods that assume identical distribution of data. For these reasons, we want to normalize the data to remove the systematic bias in our data and make our data identically distributed before proceeding with our analysis.
 
 ```{r boxplot-colored-by-lab, fig.width = 8, fig.height = 5, fig.cap = "Boxplot of Gene Expression Colored by Lab"}
 labplot
@@ -161,8 +158,153 @@ labplot
 chipplot
 ```
 
-
 # Normalization
+
+```{r}
+# Identify numeric columns
+numeric_columns <- sapply(merged_df, is.numeric)
+
+# Summary statistics for numerical columns
+numeric_summary <- data.frame(
+  feature = colnames(merged_df)[numeric_columns],
+  mean = sapply(merged_df[, numeric_columns], mean, na.rm = TRUE),
+  sd = sapply(merged_df[, numeric_columns], sd, na.rm = TRUE),
+  var = sapply(merged_df[, numeric_columns], var, na.rm = TRUE)
+)
+
+# Display top 10 variables with the highest standard deviation
+top_num <- numeric_summary %>%
+  arrange(desc(sd)) %>%
+  head(10)
+# Assuming 'top_num' contains the top 10 features with the highest variability
+top_features <- top_num$feature
+
+# Gather the data for the selected features into long format
+data_long <- merged_df %>%
+  select(all_of(top_features)) %>%
+  pivot_longer(cols = everything(), names_to = "feature", values_to = "value")
+
+# Create the ggplot with faceting
+random_features_hist <- ggplot(data_long, aes(x = value)) +
+  geom_histogram(bins = 20, fill = "lightblue", color = "black") +
+  facet_wrap(~ feature, nrow = 2, ncol = 5, scales = "free_x") +
+  theme_minimal() +
+  labs(x = "Value", y = "Frequency", title = "Histograms of Top 10 Variables with Highest Variability")
+```
+
+```{r}
+# Identify gene expression columns
+gene_cols <- colnames(merged_df)[!(colnames(merged_df) %in% c("patient", "sex", "region", "lab", "chip.version"))]
+
+# Create a function to summarize gene expression by sex for each lab
+get_lab_expression_by_sex <- function(lab_name) {
+  merged_df %>%
+    filter(lab == lab_name) %>%
+    group_by(sex) %>%
+    summarise(across(all_of(gene_cols), mean, na.rm = TRUE)) %>%
+    pivot_longer(-sex, names_to = "gene", values_to = "mean_expression") %>%
+    mutate(lab = lab_name)  # Add lab name for identification
+}
+
+# Get the summarized gene expression data for each lab
+davis_expr <- get_lab_expression_by_sex("Davis")
+irvine_expr <- get_lab_expression_by_sex("Irvine")
+michigan_expr <- get_lab_expression_by_sex("Michigan")
+
+# Combine the data from all labs
+combined_expr <- bind_rows(davis_expr, irvine_expr, michigan_expr)
+
+# Create a histogram to visualize the gene expression for males and females across labs
+mean_gene_before <- ggplot(combined_expr, aes(x = mean_expression, fill = lab)) +
+  geom_histogram(binwidth = 0.1, position = "identity", alpha = 0.6) +  # Set alpha to distinguish overlapping bins
+  facet_wrap(~ sex, scales = "free_y") +  # Separate histograms by sex
+  labs(title = "Gene Expression by Sex Across Labs",
+       x = "Mean Gene Expression",
+       y = "Frequency",
+       fill = "Lab") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_manual(values = c("yellow", "green", "blue"))  # Adjust colors as needed
+```
+
+```{r}
+# Identify gene expression columns
+gene_cols <- colnames(normalized_data )[!(colnames(normalized_data ) %in% c("patient", "sex", "region", "lab", "chip.version"))]
+
+# Create a function to summarize gene expression by sex for each lab
+get_lab_expression_by_sex <- function(lab_name) {
+  normalized_data  %>%
+    filter(lab == lab_name) %>%
+    group_by(sex) %>%
+    summarise(across(all_of(gene_cols), mean, na.rm = TRUE)) %>%
+    pivot_longer(-sex, names_to = "gene", values_to = "mean_expression") %>%
+    mutate(lab = lab_name)  # Add lab name for identification
+}
+
+# Get the summarized gene expression data for each lab
+davis_expr <- get_lab_expression_by_sex("Davis")
+irvine_expr <- get_lab_expression_by_sex("Irvine")
+michigan_expr <- get_lab_expression_by_sex("Michigan")
+
+# Combine the data from all labs
+combined_expr <- bind_rows(davis_expr, irvine_expr, michigan_expr)
+
+# Create a histogram to visualize the gene expression for males and females across labs
+mean_gene_after <- ggplot(combined_expr, aes(x = mean_expression, fill = lab)) +
+  geom_histogram(binwidth = 0.1, position = "identity", alpha = 0.6) +  # Set alpha to distinguish overlapping bins
+  facet_wrap(~ sex, scales = "free_y") +  # Separate histograms by sex
+  labs(title = "Gene Expression by Sex Across Labs after Normalization",
+       x = "Mean Gene Expression",
+       y = "Frequency",
+       fill = "Lab") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_manual(values = c("yellow", "green", "blue"))  # Adjust colors as needed
+```
+
+```{r, mean_gene_before, fig.width = 8, fig.height = 5, fig.cap = "Histogram of the Gene Expression for males and females across labs"}}
+mean_gene_before
+```
+
+```{r, random_features_hist, fig.width = 8, fig.height = 5}
+random_features_hist
+```
+
+```{r, mean_gene_after, fig.width = 8, fig.height = 5,}
+mean_gene_after
+```
+
+Normalization is a crucial step in this data analysis. Based on the graphical representation Figure \@ref(fig:random_features_hist) of several randomly selected features, we observe that none of them exhibit a unimodal distribution. For most features, two or three distinct peaks are visible in the histograms. This initial observation prompts a closer examination of the data to uncover potential underlying causes. One hypothesis is that the bimodality in the data could be attributed to sex or chip version, as both of these features have two distinct values. When we observe three distinct peaks, they could potentially be explained by the three lab values or the three brain regions. However, chip version and lab names are not desirable explanations for these observed differences. Therefore, we aim to normalize the data to eliminate any dependency between gene expression distributions and either chip version or lab. We apply normalization to address several key issues:
+
+-   **Correcting for Technical Variability**
+
+Technical factors, such as lab-specific protocols and differences between chip versions, introduce variability that is unrelated to the biological signals of interest. Normalization reduces this variability, ensuring that observed differences between samples are driven by biological factors, not technical artifacts.
+
+-   **Handling Systematic Bias**
+
+Irvine lab consistently produces higher expression values than Davis and Michigan probably due to factors unrelated to biology, such as differences in equipment or experimental conditions. Normalization compensates for these biases so that the analysis can focus on meaningful biological variation, not systematic bias.
+
+-   **Ensuring Comparability Across Samples**
+
+Different samples may have varying overall intensities due to uncontrolled factors like RNA quantity, labeling efficiency, or the number of cells in a tissue sample. Without normalization, comparing gene expression levels across samples would not be fair or reliable. Normalization helps to adjust for these differences, allowing for meaningful comparisons across all samples.
+
+-   **Supporting Statistical Testing**
+
+Normalization is essential for applying statistical tests such as the Wilcoxon test or linear models, which assume that the data is comparable across groups. Without normalization, these tests could lead to false conclusions, as uncorrected technical variability could skew the results.
+
+The success of normalization depends on the method used and how well it addresses the underlying variability. Thus, we decided to try several normalization methods:
+
+-   Mean Normalization for Each Lab Separately
+
+-   Mean Normalization (Global)
+
+-   Z-Score Normalization (group by lab and by chip version)
+
+-   ComBat
+
+-   Quantile normalization
+
+-   Spike - in Normalization
 
 ```{r z_normalization}
 z_normalized_data <- merged_df %>%
@@ -324,15 +466,54 @@ s_normalized_data_long <- s_normalized_data %>%
                values_to = "normalized_expression")
 ```
 
+### 1. Mean Normalization for Each Lab Separately
+
+-   Idea: Subtract the mean gene expression of each lab from the data and divide by the standard deviation within each lab. This normalizes each lab’s data to have zero mean and unit variance.
+-   Advantages: Controls for lab-specific variability, helping remove lab effects while retaining biological differences within each lab.
+-   Disadvantages: It doesn't account for global variation across labs, so comparisons between labs might still reflect technical variability.
+
+### 2. Mean Normalization (Global)
+
+-   Idea: The mean of all samples (across all labs) is subtracted from each data point, and the data is rescaled using global standard deviation.
+-   Advantages: Provides global consistency, allowing comparisons across labs.
+-   Disadvantages: Not account for lab-specific technical differences, introducing bias since labs have systematic variations.
+
+### 3. Z-Score Normalization (Grouped by Lab and Chip Version)
+
+-   Idea: Standardizes gene expression within each lab and chip version by subtracting the mean and dividing by the standard deviation of each group.
+-   Advantages: Balances normalization by both lab and chip version, reducing the confounding effects of technical artifacts from both sources.
+-   Disadvantages: Can complicate interpretation, especially if the chip version or lab introduces non-linear effects, and might mask biological differences.
+
+### 4. Spike-in Normalization
+
+-   Idea: Normalization is based on control genes (spike-ins) that are added in known quantities, adjusting all samples relative to these controls.
+-   Advantages: Corrects for technical variability using known controls, providing a strong base for cross-sample comparisons.
+-   Disadvantages: Assumes that spike-ins accurately reflect the behavior of endogenous genes, which might not always hold true, especially if spike-ins behave differently from other genes.
+
+### 5. ComBat
+
+-   Idea: A method commonly used for batch effect correction, ComBat adjusts for systematic differences between batches (in this case, labs or other factors) while retaining biological variability.
+-   Advantages: Effective in removing batch effects while preserving true biological differences.
+-   Disadvantages: There is potential for over-correction, which might remove some biological variation along with technical variation.
+
+### 6. Quantile Normalization
+
+-   Idea: Forces the distribution of gene expression values to be the same across all samples by sorting and averaging ranks.
+-   Advantages: Ensures comparability across samples, removing large-scale differences in distribution.
+
+Among the methods we tried, Quantile Normalization and a combination of Quantile Normalization with ComBat performed best at reducing unwanted variability. Quantile normalization ensures that the distribution of gene expression values across samples is identical, making any differences more likely to be biological rather than technical in nature and ComBat normalization further mitigates lab-specific effects. ComBat corrects for batch effects that stem from differences in experimental conditions or equipment. It uses an empirical Bayes approach to adjust for these batch differences without eliminating the biological variation we aim to study.
+
+These two techniques provided the most consistent and reliable results Figure \@ref(fig:mean_gene_before) \@ref(fig:mean_gene_after), which is why we selected them for further analysis.
+
 # Gene Selection
 
 Over the course of this investigation, our aim was to identify genes that exhibit significant differential expression for two types of comparison groups: brain region (A.C. Cortex vs. D.L.P.F Cortex) and sex (male vs. female) and effectively relay our uncertainty about our findings to your team.
 
-The methodology that we used to find an initial list of differentially expressed genes was inspired by stratified 4-fold cross-validation. The stratification ensures that each fold is representative of the entire data set. Specifically, if the current variable of interest was brain region, each fold would contain approximately 33% of their samples from each brain region. Similarly, in the case that we were interested in looking at sex as the variable of interest, each fold would be composed of roughly 50% male and 50% female samples. By making this choice, we could essentially look at each fold as a subset of the data that's distribution is similar to the overall data distribution, which is important when making claims about the characteristics of the data in each fold. 
+The methodology that we used to find an initial list of differentially expressed genes was inspired by stratified 4-fold cross-validation. The stratification ensures that each fold is representative of the entire data set. Specifically, if the current variable of interest was brain region, each fold would contain approximately 33% of their samples from each brain region. Similarly, in the case that we were interested in looking at sex as the variable of interest, each fold would be composed of roughly 50% male and 50% female samples. By making this choice, we could essentially look at each fold as a subset of the data that's distribution is similar to the overall data distribution, which is important when making claims about the characteristics of the data in each fold.
 
 The overall process we used is as follows. As would be expected when doing k=4 fold cross validation, we had four runs. In each of the runs, the data was split into four folds; one fold would act as Data Set 1 and the other three folds would act as Data Set 2. Each of these would be treated as a distinct data set. For each data set, we would apply our gene selection criteria separately to identify the top 20 genes for each of the two data sets. Specifically, our gene selection criteria chooses the top 20 genes with the largest absolute log2 fold change between comparison groups, whether it be between brain regions or sexes. This criterion is critical as it helps to pinpoint genes that exhibit substantial differences in expression. Then, once we have formed the two lists, we would find the genes in the intersection of these two lists. This process repeats for each of the four runs and for both of the variables of interest (brain region and sex). The intersection of these lists across all runs and variables of interest will yield two lists of genes (for brain region and sex), each assigned a score from 0 to 4 based on the number of runs in which they appear in the intersection. The objective is to identify genes that consistently appear in the intersection of the lists generated from these data sets (i.e. have a score closer to 4). This intersection approach allows us to focus on genes that demonstrate stable differential expression across various data splits, allowing for more robust gene selection.
 
-A gene receiving a score of 4 (or close to 4) indicates that the gene is not only differentially expressed but does so consistently across different data splits. These stable genes are of particular interest, as they suggest reliable biological significance rather than being artifacts of specific data configurations. With this in mind, we can present the initial two lists of genes. 
+A gene receiving a score of 4 (or close to 4) indicates that the gene is not only differentially expressed but does so consistently across different data splits. These stable genes are of particular interest, as they suggest reliable biological significance rather than being artifacts of specific data configurations. With this in mind, we can present the initial two lists of genes.
 
 ```{r}
 # function to create the concatenated list of the top 40 (combined) differentially expressed genes conditioned on the confounding variable
@@ -421,8 +602,6 @@ top_n_genes <- function(n = 20, df, variable_of_interest) {
   return(NULL)
 }
 ```
-
-
 
 ```{r region-table, fig.cap = "Table of Differentially Expressed Genes for Region based on CV"}
 # cross validation for region
@@ -553,18 +732,13 @@ df_genes_counts_sex %>%
 
 ```
 
-The analysis in \@ref(fig:sex-table) also revealed a set of 5 genes are are differentially expresed between the two sexes regardless of the manner in which the data was split during cross validation. Specifically, these are genes that we have some confidence in believing are actually differentially expressed between males and females, seeing as they consistently appear on the top 20 lists when we split the data which is unfortunately << the number of original candidate genes. Again, we have one gene, 41214_at, which shows up in the intersection in every run. This is an inital list of genes which we selected from the massive set of genes we were given which we believe to be differentially expressed consistently across subsets of the data, and although these are our most stable choices, further analysis is also done to cooaberate the genes on this list as well through more classical statical analysis. 
+The analysis in \@ref(fig:sex-table) also revealed a set of 5 genes are are differentially expresed between the two sexes regardless of the manner in which the data was split during cross validation. Specifically, these are genes that we have some confidence in believing are actually differentially expressed between males and females, seeing as they consistently appear on the top 20 lists when we split the data which is unfortunately \<\< the number of original candidate genes. Again, we have one gene, 41214_at, which shows up in the intersection in every run. This is an inital list of genes which we selected from the massive set of genes we were given which we believe to be differentially expressed consistently across subsets of the data, and although these are our most stable choices, further analysis is also done to cooaberate the genes on this list as well through more classical statical analysis.
 
 While we have identified a promising initial, stable list of genes for both of the variables of interest, it is essential to address the inherent uncertainties in these selections. As we proceed, we will discuss the steps we have taken to confirm some of the selected genes using other tests in order to form a priority list of genes that we are most confident in. Overall, this foundational work done by the stratified 4-fold cross validation acted as an initial gene filtering process and set the stage for more in-depth exploration and validation of these candidate genes.
 
 # Robustness
 
-Given the coarse nature of our current estimate of uncertainty, we wish to understand how robust our selection process is in terms of various analysis choices. In particular, in this section we will analyze how our results change based on two design choices: a more classical statistical test for significance and alternate normalizations. 
-
-## Wilcoxon Rank-Sum Test
-
-The Wilcoxon Rank Sum test is a non-parametric hypothesis testing procedure that tests whether two samples come from populations with the same distribution. Being non-parametric, it makes minimal assumptions about the underlying distributions from which our samples come from. With this in mind, we felt that this was an appropriate procedure to test whether, for example, gene expression was equally distributed between men and women in the data. For each non-control gene in the data set, we compared the expression values coming from one condition of interest to another (i.e. male vs. female or AC vs. DLFP). 
-\par After receiving a p-value for each gene in the data, we applied a Benjamini-Hochberg correction to account for multiple testing and identified those significant at $\alpha = 0.05$. We found no genes that seemed to be distributed differently in the different brain cortices and found the following genes to be differentially expressed in men versus women: `41214_at` and `38355_at`. It is worth noting that both of these genes were found in our main analysis, which underscores our confidence in these genes' differential expression.
+## Wilcoxon rank sum test
 
 ```{r}
 # Create a data frame to store results
@@ -607,7 +781,7 @@ wilcox_results <- wilcox_results %>% arrange(adjusted_p_value)
 significant_genes <- wilcox_results %>% filter(adjusted_p_value < 0.05)
 
 # View significant genes
-#print(significant_genes)
+print(significant_genes)
 ```
 
 ```{r}
@@ -640,58 +814,50 @@ wilcox_results <- wilcox_results %>% arrange(adjusted_p_value)
 significant_genes <- wilcox_results %>% filter(adjusted_p_value < 0.05)
 
 # View significant genes
-# print(significant_genes)
+print(significant_genes)
 ```
 
-## Alternate Normalizations
-
-While we were most confident in our application of Quantile Normalization with ComBat, we wondered whether we would select the same genes if we applied our main analysis with alternate normalizations. The two alternate normalizations we considered were Z-score Normalization and Spike-in Normalization. For Z-score normalization we grouped the data by both chip set and lab, then standardized such that each group has mean zero and standard deviation one. For Spike-in Normalization we found the average gene expression in each lab for the control probesets and divided each gene's expression by the mean of that lab's control value.
-\par After applying each of these normalizations and conducting the cross-validation analysis we found the following numbers of significant genes:
-
-| Alternate Normalization | Sex Genes | Share with Main | Region Genes | Share with Main |
-|-------------------------|-----------|-----------------|--------------|-----------------|
-| Z-Score                 | 8         | 6               | 2            | 1               |
-| Spike-in                | 7         | 6               | 3            | 3               |
-
-where the "Share with Main" column denotes how many of these genes were also found in the main analysis. As we see, there was relatively consistent results between the different normalizations. As such, while the quantile normalization with ComBat was able to find more significant genes than these alternate normalizations, those that were found by the alternate normalizations tended to also be found in the main analysis. To summarize, those genes identified by all forms of normalization were the following:
-
-| Sex Genes  | Region Genes |
-|------------|--------------|
-| 38355_at   |              |
-| 41214_at   |              |
-| 31525_s_at |              |
-| 32052_at   |              |
-
-This gives us some further reason to investigate these genes as potentially differentially expressed by sex, but also undermines the robustness of our main analysis' brain region results.
-
+## Investigating alternate normalizations
 
 ```{r alternate_normalizations}
-#main_sex <- cv_genes(normalized_data, analysis = "sex")
-#main_region <- cv_genes(normalized_data, analysis = "region")
-#print(main_sex)
-#print(main_region)
+main_sex <- cv_genes(normalized_data, analysis = "sex")
+main_region <- cv_genes(normalized_data, analysis = "region")
+print(main_sex)
+print(main_region)
 ```
 
 ```{r alternate_normalizations_s}
-#s_sex <- print(cv_genes(s_normalized_data, analysis = "sex"))
-#s_region <- print(cv_genes(s_normalized_data, analysis = "region"))
-#print(s_sex)
-#print(s_region)
+s_sex <- print(cv_genes(s_normalized_data, analysis = "sex"))
+s_region <- print(cv_genes(s_normalized_data, analysis = "region"))
+print(s_sex)
+print(s_region)
 ```
 
 ```{r alternate_normalizations_z}
-#z_sex <- print(cv_genes(z_normalized_data, analysis = "sex"))
-#z_region <- print(cv_genes(z_normalized_data, analysis = "region"))
-#print(z_sex)
-#print(z_region)
+z_sex <- print(cv_genes(z_normalized_data, analysis = "sex"))
+z_region <- print(cv_genes(z_normalized_data, analysis = "region"))
+print(z_sex)
+print(z_region)
 ```
 
-# Conclusion
+### Shared Results
 
-In this analysis we first performed exploratory data analysis. Here we found systematic differences in gene expression between labs and decided to use quantile normalization with ComBat, using the former to deal with differences in distribution and the latter to deal with varying sample sizes between the labs. After the data appeared to be consistent across labs, we used a stratified cross-validation in order to identify genes with large mean differences across independent random samples of the data in order to produce a list of 8 genes differentially expressed across sex and 13 that were differentially expressed between brain regions. After conducting some robustness checks, we found consistency of many of our sex genes across different normalization schemes, but less consistency across brain region genes. 
-\par Moving forward, lab members should let us know which of these genes are of interest and we can conduct more thorough analyses. In particular, multiple of the identified sex genes are on the Y chromosome, which may or may not be of interest to researchers. In future analyses of this type, we would be interested in investigating which genes are co-expressed as well as using more sophisticated techniques to extract differentially expressed genes.
+```{r}
+length(s_sex$Genes)
+mean(s_sex$Genes %in% c(main_sex$genes, s_sex$genes))
+
+length(s_region$Genes)
+mean(s_region$Genes %in% c(main_region$genes, s_region$genes))
+
+length(z_sex$Genes)
+mean(z_sex$Genes %in% c(main_sex$genes, z_sex$genes))
+
+length(z_region$Genes)
+mean(z_region$Genes %in% c(main_region$genes, z_region$genes))
+```
 
 \newpage
+
 # Appendix: All code for this report
 
 ```{r get-labels, echo = FALSE}
